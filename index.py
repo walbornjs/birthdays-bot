@@ -100,8 +100,8 @@ async def scheduled_message(context: ContextTypes.DEFAULT_TYPE) -> None:
   await context.bot.send_message(
     chat_id=job.data["chat_id"],
     message_thread_id=job.data["thread_id"],
-    text=f"🔔 Напоминание! Время: **{job.data['scheduled_time']}**",
-    parse_mode="MarkdownV2" 
+    text=f"🔔 Напоминание! Время: <b>{job.data['scheduled_time']}</b>",
+    parse_mode="HTML"
   )
 
 async def start_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -143,7 +143,7 @@ async def start_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     context.job_queue.run_daily(
       callback=scheduled_message,
       time=time_obj,
-      days=tuple(range(7)),  # Все дни недели
+      days=tuple(range(7)),
       name=job_name,
       data=job_data
     )
