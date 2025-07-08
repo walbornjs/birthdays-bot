@@ -6,9 +6,7 @@ from dotenv import load_dotenv
 from datetime import datetime, time, timezone, timedelta, date
 import logging
 import locale
-from pymorphy2 import MorphAnalyzer
-
-morph = MorphAnalyzer()
+from pymorphy3 import MorphAnalyzer
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -25,15 +23,11 @@ logging.basicConfig(
   level=logging.INFO
 )
 
-def decline_name(name, case):
-  """
-  Склоняет имя в указанный падеж.
-  Доступные падежи: 'nomn', 'gent', 'datv', 'accs', 'ablt', 'loct'.
-  """
-  parsed = morph.parse(name)[0]
-  declined = parsed.inflect({case}).word if parsed.inflect({case}) else name
-  return declined.capitalize()
+morph = MorphAnalyzer()
 
+def decline_name(name, case):
+  parsed = morph.parse(name)[0]
+  return parsed.inflect({case}).word.capitalize() if parsed.inflect({case}) else name
 
 # База данных дней рождения
 PERSONS = [
@@ -153,9 +147,9 @@ async def schedule_birthday_tasks(update: Update, job_queue) -> None:
     chat_id, message_thread_id, name, bday = get_job_data(update, person)
     
     when = datetime.combine(bday.replace(year=now.year), time(hour=HOUR, minute=MINUTE), tzinfo=MOSCOW_TZ)
-    # when = datetime.combine(bday.replace(year=now.year), time(hour=now.hour, minute=now.minute, second=now.second + 5), tzinfo=MOSCOW_TZ)
-    early = datetime.combine(bday.replace(year=now.year) - timedelta(days=10), time(hour=HOUR + 1, minute=MINUTE), tzinfo=MOSCOW_TZ)
-    # early = datetime.combine(bday.replace(year=now.year) - timedelta(days=10), time(hour=now.hour, minute=now.minute, second=now.second + 5), tzinfo=MOSCOW_TZ)
+    # when = datetime.combine(bday.replace(year=now.year), time(hour=now.hour, minute=now.minute, second=now.second + 3), tzinfo=MOSCOW_TZ)
+    # early = datetime.combine(bday.replace(year=now.year) - timedelta(days=10), time(hour=HOUR + 1, minute=MINUTE), tzinfo=MOSCOW_TZ)
+    early = datetime.combine(bday.replace(year=now.year) - timedelta(days=10), time(hour=now.hour, minute=now.minute, second=now.second + 3), tzinfo=MOSCOW_TZ)
     if when < now: when = when.replace(year=now.year + 1)
     if early < now: early = early.replace(year=now.year + 1)
   
@@ -184,7 +178,7 @@ async def schedule_birthday_tasks(update: Update, job_queue) -> None:
       name=f"{job_name}_early"
     )
   
-    logging.info(f"Запланировано напоминание для {name} на {when}")
+    logging.info(f"Запланировано напоминание для {decline_name(name, 'gent')} на {when}")
 
 
 async def send_birthday_reminder_and_create_next(context: ContextTypes.DEFAULT_TYPE) -> None:
