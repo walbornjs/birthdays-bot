@@ -29,6 +29,20 @@ pip install -r requirements.txt
 ## Run bot
 python index.py
 
+# Deploy
+## PythonAnyWhere
+```sh
+# clone repo
+git clone https://github.com/walbornjs/birthdays-bot.git
+cd birthdays-bot/
+# dive to venv and install requirements
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+# add telegram token
+echo "TELEGRAM_TOKEN=asdfasdg" > .env
+
+```
+
 # License
 This program is dedicated to the public domain under the CC0 license.
 

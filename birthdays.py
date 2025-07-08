@@ -3,7 +3,7 @@
 
 import os
 from dotenv import load_dotenv
-from datetime import datetime, time, timezone, timedelta
+from datetime import date, datetime, time, timezone, timedelta
 import re
 import logging
 
@@ -20,10 +20,27 @@ logging.basicConfig(
   level=logging.INFO
 )
 
+persons = [
+  {"name": "Платон", "birthday": date(2000, 1, 15)}, # 15.01.2000
+  {"name": "Черный Витя", "birthday": date(2000, 5, 29)}, # 29.05.2000
+  {"name": "Эмиль", "birthday": date(2000, 12, 8)}, # 08.12.2000
+  {"name": "Аня Новицкая", "birthday": date(2017, 10, 22)}, # 22.10.2017
+  {"name": "Нина Черная", "birthday": date(2020, 8, 18)}, # 18.08.2020
+  {"name": "Агата", "birthday": date(2019, 6, 20)}, # 20.06.2019
+  {"name": "Левон", "birthday": date(2018, 6, 10)}, # 10.06.2018
+  {"name": "Миша", "birthday": date(2020, 10, 19)}, # 20.10.2020
+  {"name": "Мила", "birthday": date(2020, 7, 19)}, # 19.07.2020
+  {"name": "Аврора", "birthday": date(2021, 6, 19)}, # 19.06.2021
+  {"name": "Вера", "birthday": date(2018, 5, 6)}, # 05.06.2018
+  {"name": "Мира", "birthday": date(2020, 11, 6)}, # 06.11.2020
+  {"name": "Вероника", "birthday": date(2000, 5, 4)}, # 04.05.2000
+  {"name": "Vasya Pupkin", "birthday": datetime.now() + timedelta(seconds=30)}, # 04.05.2000
+]
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-  """Sends explanation on how to use the bot."""
-  await update.message.reply_text("Hi! Use `/notify HH:MM` to set notifications")
+
+# async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+#   """Sends explanation on how to use the bot."""
+#   await update.message.reply_text("Hi! Use `/notify HH:MM` to set notifications")
 
 
 def format_timedelta(delta: timedelta) -> str:
@@ -44,6 +61,7 @@ def format_timedelta(delta: timedelta) -> str:
     parts.append(f"{seconds} сек.")
   
   return " ".join(parts)
+
 
 async def check_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
   """Check time left until next notification"""
@@ -105,74 +123,63 @@ async def scheduled_message(context: ContextTypes.DEFAULT_TYPE) -> None:
     parse_mode="HTML"
   )
 
-async def start_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-  """Set daily notification at specified time."""
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+  """Set birthdays notifications"""
   chat_id = update.effective_message.chat_id
   thread_id = update.effective_message.message_thread_id
   
-  try:
-    # Проверяем аргументы команды
-    if not context.args:
-      raise ValueError("Не указано время")
-    
-    time_str = context.args[0]
-    
-    # Проверяем формат времени с помощью регулярного выражения
-    if not re.match(r'^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$', time_str):
-      raise ValueError("Неверный формат времени")
-    
-    # Разбираем время
-    hour, minute = map(int, time_str.split(':'))
-    
-    # Создаем объект времени
-    time_obj = time(hour, minute, tzinfo=MOSCOW_TZ)
-    
-    # Создаем уникальное имя задания
-    job_name = f"notify_{chat_id}_{thread_id}"
-    
-    # Удаляем старое задание если существует
-    job_removed = remove_job_if_exists(job_name, context)
-    
-    # Создаем данные для задания
-    job_data = {
-      "chat_id": chat_id,
-      "thread_id": thread_id,
-      "scheduled_time": time_str
-    }
-    
-    # Создаем задание
-    context.job_queue.run_daily(
+  job_data = {
+    "chat_id": chat_id,
+    "thread_id": thread_id,
+  }
+
+  for person in persons:
+    day = person["birthday"].day
+    month = person["birthday"].month
+
+    context.job_queue.run_once(
       callback=scheduled_message,
-      time=time_obj,
-      days=tuple(range(7)),
-      name=job_name,
+      time=time(9, 0, tzinfo=MOSCOW_TZ),
+      day=day,
+      month=month,
+      name=f"{chat_id}_{thread_id}_{person['name']}",
       data=job_data
     )
-    
-    text = f"⏰ Ежедневное уведомление установлено на {time_str} по MSK!"
-    if job_removed:
-      text += "\n(Предыдущее уведомление заменено)"
+
+
+    text = f"⏰ Посмотрим, посмотрим, когда там у кого-то день рождения!"
     await update.effective_message.reply_text(text)
-    
-  except (ValueError, IndexError) as e:
-    error_msg = str(e) if str(e) else "Неверный формат времени"
-    await update.effective_message.reply_text(
-      f"❌ Ошибка: {error_msg}\n"
-      "Используйте: /notify ЧЧ:ММ\n"
-      "Пример: /notify 09:00"
-    )
 
 
-async def stop_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
   """Remove the notification job."""
   chat_id = update.effective_message.chat_id
   thread_id = update.effective_message.message_thread_id
-  job_name = f"notify_{chat_id}_{thread_id}"
-  
-  job_removed = remove_job_if_exists(job_name, context)
-  text = "❌ Все уведомления отменены!" if job_removed else "🌴 Нет активных уведомлений"
-  await update.effective_message.reply_text(text)
 
+  for person in persons:
+    name=f"{chat_id}_{thread_id}_{person['name']}"
+    jobs = context.job_queue.get_jobs_by_name(name)
+    for job in jobs:
+      job.schedule_removal()
+    if jobs:
+      text = f"✅ Уведомление для {person['name']} отменено!"
+      await update.effective_message.reply_text(text)
+    
+# async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+#     """Приветственное сообщение"""
+#     await update.message.reply_text(
+#         "🎂 Бот-напоминатель о днях рождения!\n"
+#         "Я буду автоматически оповещать о днях рождения каждый день в 9:00 по МСК."
+#     )
+    
+#     # Если это первый запуск, устанавливаем задачу
+#     if not context.job_queue.get_jobs_by_name("birthday_checker"):
+#         context.job_queue.run_daily(
+#             check_birthdays,
+#             time=time(hour=9, minute=0, tzinfo=MOSCOW_TZ),
+#             days=tuple(range(7)),
+#             name="birthday_checker"
+#         )
 
 def main() -> None:
   """Run bot."""
@@ -180,10 +187,8 @@ def main() -> None:
   application = Application.builder().token(TOKEN).build()
 
   # on different commands - answer in Telegram
-  application.add_handler(CommandHandler(["start", "help"], start))
-  application.add_handler(CommandHandler("notify", start_notify))
-  application.add_handler(CommandHandler("stop_notify", stop_notify))
-  application.add_handler(CommandHandler("check", check_notify))
+  application.add_handler(CommandHandler("start", start))
+  application.add_handler(CommandHandler("stop", stop))
 
   # Run the bot until the user presses Ctrl-C
   application.run_polling(allowed_updates=Update.ALL_TYPES)
