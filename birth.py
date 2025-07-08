@@ -148,8 +148,8 @@ async def schedule_birthday_tasks(update: Update, job_queue) -> None:
     
     when = datetime.combine(bday.replace(year=now.year), time(hour=HOUR, minute=MINUTE), tzinfo=MOSCOW_TZ)
     # when = datetime.combine(bday.replace(year=now.year), time(hour=now.hour, minute=now.minute, second=now.second + 3), tzinfo=MOSCOW_TZ)
-    # early = datetime.combine(bday.replace(year=now.year) - timedelta(days=10), time(hour=HOUR + 1, minute=MINUTE), tzinfo=MOSCOW_TZ)
-    early = datetime.combine(bday.replace(year=now.year) - timedelta(days=10), time(hour=now.hour, minute=now.minute, second=now.second + 3), tzinfo=MOSCOW_TZ)
+    early = datetime.combine(bday.replace(year=now.year) - timedelta(days=10), time(hour=HOUR + 1, minute=MINUTE), tzinfo=MOSCOW_TZ)
+    # early = datetime.combine(bday.replace(year=now.year) - timedelta(days=10), time(hour=now.hour, minute=now.minute, second=now.second + 3), tzinfo=MOSCOW_TZ)
     if when < now: when = when.replace(year=now.year + 1)
     if early < now: early = early.replace(year=now.year + 1)
   
