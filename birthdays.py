@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime, time, timezone, timedelta, date
 import logging
-
+import re
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -78,8 +78,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def get_job_data(update: Update, person) -> tuple:
   """Generate job data"""
-  chat_id = update.effective_chat.id # update.effective_message.chat_id
-  message_thread_id = update.effective_message.message_thread_id # getattr(update.effective_message, 'message_thread_id', None)
+  chat_id = update.effective_chat.id
+  message_thread_id = update.effective_message.message_thread_id
 
   name = person["name"]
   bday = person["birthday"]
@@ -90,8 +90,15 @@ def get_job_data(update: Update, person) -> tuple:
 def get_job_name(update: Update, person) -> str:
   """Generate job name"""
   chat_id, message_thread_id, name, bday = get_job_data(update, person)
-  # when = datetime.combine(bday, time(hour=9, minute=0), tzinfo=MOSCOW_TZ)
   return f"{chat_id}_{message_thread_id}_{name}_{bday}"
+
+
+def remove_existing_jobs(job_queue, job_name_base):
+  """Remove existing jobs for a person"""
+  for job in job_queue.jobs():
+    if job.name.startswith(job_name_base):
+      job.schedule_removal()
+      logging.info(f"Removed existing job: {job.name}")
 
 
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -107,30 +114,22 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
       return await update.message.reply_text(message, parse_mode="HTML")
     
     message_parts = []
+    sorted_jobs = sorted(jobs, key=lambda x: x.next_t)
     
-    jobs = sorted([job for job in jobs], key=lambda x: (x.next_t.month, x.next_t.day))
-
-    for job in jobs:
+    for job in sorted_jobs:
       if hasattr(job, 'data') and 'name' in job.data:
         name = job.data['name']
-        when = job.next_t
-        if when:
-          when_str = when.strftime("%d.%m.%Y %H:%M")
-          message_parts.append(f"• <b>{name}</b> - {when_str}")
-    
-    if not message_parts:
-      message = (
-        "📅 <b>Нет активных уведомлений</b>\n\n"
-        "Нужно вызвать команду /start"
-      )
-      return await update.message.reply_text(message, parse_mode="HTML")
+        when = job.next_t.astimezone(MOSCOW_TZ)
+        when_str = when.strftime("%d.%m.%Y %H:%M")
+        reminder_type = "⏳ Предупреждение" if "early" in job.name else "🎂 День рождения"
+        message_parts.append(f"• {reminder_type}: <b>{name}</b> - {when_str}")
     
     full_message = "📅 <b>Запланированные уведомления:</b>\n\n" + "\n".join(message_parts)
     await update.message.reply_text(full_message, parse_mode="HTML")
       
   except Exception as e:
-    logging.error(f"Error in /check command: {e}")
-    await update.message.reply_text(f"Ошибка при проверке: {e}", parse_mode="HTML")
+    logging.error(f"Error in /check command: {e}", exc_info=True)
+    await update.message.reply_text(f"❌ Ошибка при проверке: {e}", parse_mode="HTML")
 
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -139,7 +138,6 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     jobs = context.job_queue.jobs()
     removed_count = 0
     
-    # Remove all jobs for this chat
     for job in jobs:
       if (hasattr(job, 'data') and job.data.get('chat_id') == update.effective_chat.id):
         job.schedule_removal()
@@ -154,23 +152,24 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     
   except Exception as e:
-    logging.error(f"Error in stop command: {e}")
-    await update.message.reply_text(f"Ошибка при остановке: {e}")
+    logging.error(f"Error in stop command: {e}", exc_info=True)
+    await update.message.reply_text(f"❌ Ошибка при остановке: {e}", parse_mode="HTML")
 
 async def schedule_birthday_tasks(update: Update, job_queue) -> None:
-  """Shedules tasks for sending birthday reminders."""
+  """Schedules tasks for sending birthday reminders."""
   now = datetime.now(MOSCOW_TZ)
+  persons = get_persons()  # Используем актуальные данные из файла
 
-  persons = get_persons()
   for person in persons:
     chat_id, message_thread_id, name, bday = get_job_data(update, person)
     
     when = datetime.combine(bday.replace(year=now.year), time(hour=HOUR, minute=MINUTE), tzinfo=MOSCOW_TZ)
-    # when = datetime.combine(bday.replace(year=now.year), time(hour=now.hour, minute=now.minute, second=now.second + 3), tzinfo=MOSCOW_TZ)
     early = datetime.combine(bday.replace(year=now.year) - timedelta(days=10), time(hour=HOUR + 1, minute=MINUTE), tzinfo=MOSCOW_TZ)
-    # early = datetime.combine(bday.replace(year=now.year) - timedelta(days=10), time(hour=now.hour, minute=now.minute, second=now.second + 3), tzinfo=MOSCOW_TZ)
-    if when < now: when = when.replace(year=now.year + 1)
-    if early < now: early = early.replace(year=now.year + 1)
+    
+    if when < now: 
+      when = when.replace(year=now.year + 1)
+    if early < now: 
+      early = early.replace(year=now.year + 1)
   
     job_data = {
       "chat_id": chat_id,
@@ -181,20 +180,24 @@ async def schedule_birthday_tasks(update: Update, job_queue) -> None:
       "early": early,
     }
 
-    job_name = get_job_name(update, person)
+    base_job_name = get_job_name(update, person)
+    
+    # Удаляем существующие задания для этого человека
+    remove_existing_jobs(job_queue, base_job_name)
 
+    # Создаем новые задания
     job_queue.run_once(
       callback=send_birthday_reminder_and_create_next,
       when=when,
       data=job_data,
-      name=job_name
+      name=base_job_name
     )
 
     job_queue.run_once(
       callback=send_early_birthday_reminder_and_create_next,
       when=early,
       data=job_data,
-      name=f"{job_name}_early"
+      name=f"{base_job_name}_early"
     )
   
     logging.info(f"Запланировано напоминание для {decline_name(name, 'gent')} на {when}")
@@ -211,10 +214,10 @@ async def send_birthday_reminder_and_create_next(context: ContextTypes.DEFAULT_T
   try:
     age = datetime.now().year - birthday.year
     message_text = (
-      f"🎉 Сегодня день рождения у <b>{decline_name(name, 'gent')}</b><code>!\n\n"
+      f"🎉 Сегодня день рождения у <b>{decline_name(name, 'gent')}</b>!\n\n"
       f"🎂 {decline_name(name, 'datv')} исполняется {age} лет!"
       f"<pre>{meow}</pre>\n\n"
-      f"... поздравляем ...</code>"
+      f"... поздравляем ..."
     )
     await context.bot.send_message(
       chat_id=chat_id,
@@ -225,7 +228,7 @@ async def send_birthday_reminder_and_create_next(context: ContextTypes.DEFAULT_T
 
     logging.info(f"Sent birthday notification for {name}")
   except Exception as e:
-    logging.error(f"Error sending birthday notification: {e}")
+    logging.error(f"Error sending birthday notification: {e}", exc_info=True)
   
   # Schedule next year's notification
   try:
@@ -233,6 +236,10 @@ async def send_birthday_reminder_and_create_next(context: ContextTypes.DEFAULT_T
     next_bday = birthday.replace(year=next_year)
     when = datetime.combine(next_bday, time(hour=HOUR, minute=MINUTE), tzinfo=MOSCOW_TZ)
 
+    # Обновляем данные для нового задания
+    job.data["when"] = when
+    job.data["birthday"] = next_bday
+    
     context.job_queue.run_once(
       callback=send_birthday_reminder_and_create_next,
       when=when,
@@ -241,7 +248,7 @@ async def send_birthday_reminder_and_create_next(context: ContextTypes.DEFAULT_T
     )
     logging.info(f"Rescheduled birthday notification for {decline_name(name, 'gent')} to {when}")
   except Exception as e:
-    logging.error(f"Error rescheduling birthday notification: {e}")
+    logging.error(f"Error rescheduling birthday notification: {e}", exc_info=True)
 
 async def send_early_birthday_reminder_and_create_next(context: ContextTypes.DEFAULT_TYPE) -> None:
   """Sends an early birthday reminder and schedules the next one"""
@@ -254,9 +261,9 @@ async def send_early_birthday_reminder_and_create_next(context: ContextTypes.DEF
   try:
     message_text = (
       f"⏳ <b>Скоро</b> день рождения у <b>{decline_name(name, 'gent')}</b>!\n\n"
-      f"🎂 {format_date(birthday)}!\n\n<code>"
+      f"🎂 {format_date(birthday)}!\n\n"
       f"<pre>{kaomoji}</pre>\n\n"
-      f"... готовим подарки ...</code>"
+      f"... готовим подарки ..."
     )
     await context.bot.send_message(
       chat_id=chat_id,
@@ -265,7 +272,7 @@ async def send_early_birthday_reminder_and_create_next(context: ContextTypes.DEF
       parse_mode="HTML",
     )
   except Exception as e:
-    logging.error(f"Ошибка отправки уведомления: {e}")
+    logging.error(f"Ошибка отправки уведомления: {e}", exc_info=True)
   
   # Schedule next year's early reminder
   try:
@@ -273,6 +280,10 @@ async def send_early_birthday_reminder_and_create_next(context: ContextTypes.DEF
     next_bday = birthday.replace(year=next_year)
     early = datetime.combine(next_bday - timedelta(days=10), time(hour=HOUR + 1, minute=MINUTE), tzinfo=MOSCOW_TZ)
 
+    # Обновляем данные
+    job.data["early"] = early
+    job.data["birthday"] = next_bday
+    
     context.job_queue.run_once(
       callback=send_early_birthday_reminder_and_create_next,
       when=early,
@@ -281,41 +292,100 @@ async def send_early_birthday_reminder_and_create_next(context: ContextTypes.DEF
     )
     logging.info(f"Rescheduled early notification for {decline_name(name, 'gent')} to {early}")
   except Exception as e:
-    logging.error(f"Error rescheduling early notification: {e}")
+    logging.error(f"Error rescheduling early notification: {e}", exc_info=True)
 
-async def list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def list_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
   """List all birthdays"""
   try:
     persons = get_persons()
-    # Sort by month and day
     persons.sort(key=lambda x: (x["birthday"].month, x["birthday"].day))
     
     chunks = ["🎂 <b>Список дней рождения:</b>\n"]
+    current_year = datetime.now().year
     
     for person in persons:
       name = person["name"]
       birthday = person["birthday"]
-      # age = datetime.now().year - birthday.year
-      
-      # todo узнать у всех год рождения
-      chunks.append(f"• <b>{name}</b> - {format_date(birthday)}") # ({age} лет)
+      age = current_year - birthday.year
+      chunks.append(f"• <b>{name}</b> - {format_date(birthday)} ({age} лет)")
     
     await update.message.reply_text("\n".join(chunks), parse_mode="HTML")
       
   except Exception as e:
-    logging.error(f"Error in list_birthdays: {e}")
-    await update.message.reply_text(f"Ошибка при получении списка: {e}")
+    logging.error(f"Error in list_birthdays: {e}", exc_info=True)
+    await update.message.reply_text(f"❌ Ошибка при получении списка: {e}", parse_mode="HTML")
 
-async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def add_birthday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+  """Add new birthday to the list"""
+  try:
+    args = context.args
+    if len(args) < 2:
+      await update.message.reply_text(
+        "❌ Неверный формат команды\n"
+        "Используйте: /add \{name\} \{dd.mm.yyyy\}\n"
+        "Пример: /add Анна 15.05.1990"
+      )
+      return
+
+    # Объединяем все аргументы кроме последнего как имя
+    name = " ".join(args[:-1])
+    date_str = args[-1]
+    
+    # Проверка формата даты
+    if not re.match(r"^\d{2}\.\d{2}\.\d{4}$", date_str):
+      return await update.message.reply_text(
+        "❌ Неверный формат даты\n"
+        "Используйте dd.mm.yyyy (например: 15.05.2021)"
+      )
+
+    try:
+      birth_date = datetime.strptime(date_str, "%d.%m.%Y").date()
+      if birth_date > date.today():
+        await update.message.reply_text("❌ Дата рождения не может быть в будущем")
+        return
+    except ValueError:
+      await update.message.reply_text("❌ Некорректная дата")
+      return
+
+    # Проверка на дубликаты
+    persons = get_persons()
+    if any(p["name"].lower() == name.lower() for p in persons):
+      await update.message.reply_text(f"❌ Имя '{name}' уже существует в списке")
+      return
+
+    # Добавляем новую запись
+    new_entry = {"name": name, "birthday": birth_date.isoformat()}
+    current_data = load('birthdays.json', DEFAULT_PERSONS)
+    current_data.append(new_entry)
+    save('birthdays.json', current_data)
+
+    # Планируем уведомления
+    await schedule_birthday_tasks(update, context.job_queue)
+    
+    await update.message.reply_text(
+      f"✅ <b>{name}</b> добавлен(а) в список!\n"
+      f"Дата рождения: {format_date(birth_date)}",
+      parse_mode="HTML"
+    )
+    
+  except Exception as e:
+    logging.error(f"Error in add_birthday: {e}", exc_info=True)
+    await update.message.reply_text(f"❌ Ошибка при добавлении: {e}", parse_mode="HTML")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
   """Show help information."""
   help_text = (
     f"🎂 <b>Birthday Bot - Команды</b>\n\n"
     f"<b>/start</b> - Запустить бота и запланировать уведомления\n"
+    f"<b>/add &lt;Имя&gt; &lt;ДД.ММ.ГГГГ&gt;</b> - Добавить новый день рождения\n"
     f"<b>/list</b> - Показать все дни рождения\n"
     f"<b>/check</b> - Проверить запланированные уведомления\n"
     f"<b>/stop</b> - Остановить все уведомления\n"
     f"<b>/help</b> - Показать эту справку\n\n"
-    f"<i>Бот автоматически отправляет уведомления о днях рождения в 9:00 МСК</i>"
+    f"<i>Бот автоматически отправляет уведомления:</i>\n"
+    f"• За 10 дней до дня рождения\n"
+    f"• В сам день рождения\n"
+    f"<i>Время: 9:00 МСК</i>"
   )
 
   await update.message.reply_text(help_text, parse_mode="HTML")
@@ -323,27 +393,30 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
   await update.message.reply_text(
-    f"<b>Неизвестная команда</b>\n\n"
-    f"Вот список доступных команд:\n",
+    f"<b>❌ Неизвестная команда</b>\n\n"
+    f"Используйте /help для списка команд",
     parse_mode="HTML"
   )
-  await help(update, context)  # call /help
 
 def main() -> None:
-  if not TOKEN: return logging.error("Требуется TELEGRAM_TOKEN в .env")
+  if not TOKEN: 
+      return logging.error("Требуется TELEGRAM_TOKEN в .env")
 
   application = Application.builder().token(TOKEN).build()
 
-  application.add_handler(CommandHandler("start", start))
-  application.add_handler(CommandHandler("stop", stop))
-  application.add_handler(CommandHandler("check", check))
-  application.add_handler(CommandHandler("list", list))
-  application.add_handler(CommandHandler("help", help))
-
-  # schedule_birthday_tasks(application.job_queue)
-
-  # Обработчик для неизвестных команд
-  application.add_handler(MessageHandler(filters.COMMAND, unknown))
+  # Регистрация обработчиков команд
+  handlers = [
+      CommandHandler("start", start),
+      CommandHandler("stop", stop),
+      CommandHandler("check", check),
+      CommandHandler("list", list_birthdays),
+      CommandHandler("add", add_birthday),
+      CommandHandler("help", help_command),
+      MessageHandler(filters.COMMAND, unknown)
+  ]
+  
+  for handler in handlers:
+      application.add_handler(handler)
 
   application.run_polling(allowed_updates=Update.ALL_TYPES)
 
