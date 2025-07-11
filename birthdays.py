@@ -400,23 +400,23 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main() -> None:
   if not TOKEN: 
-      return logging.error("Требуется TELEGRAM_TOKEN в .env")
+    return logging.error("Требуется TELEGRAM_TOKEN в .env")
 
   application = Application.builder().token(TOKEN).build()
 
   # Регистрация обработчиков команд
   handlers = [
-      CommandHandler("start", start),
-      CommandHandler("stop", stop),
-      CommandHandler("check", check),
-      CommandHandler("list", list_birthdays),
-      CommandHandler("add", add_birthday),
-      CommandHandler("help", help_command),
-      MessageHandler(filters.COMMAND, unknown)
-  ]
+    CommandHandler("start", start),
+    CommandHandler("stop", stop),
+    CommandHandler("check", check),
+    CommandHandler("list", list_birthdays),
+    CommandHandler("add", add_birthday),
+    CommandHandler("help", help_command),
+    MessageHandler(filters.COMMAND, unknown)
+]
   
   for handler in handlers:
-      application.add_handler(handler)
+    application.add_handler(handler)
 
   application.run_polling(allowed_updates=Update.ALL_TYPES)
 
