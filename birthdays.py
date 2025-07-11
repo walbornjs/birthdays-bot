@@ -95,10 +95,13 @@ def get_job_name(update: Update, person) -> str:
 
 def remove_existing_jobs(job_queue, job_name_base):
   """Remove existing jobs for a person"""
+  removed_count = 0
   for job in job_queue.jobs():
     if job.name.startswith(job_name_base):
       job.schedule_removal()
+      removed_count += 1
       logging.info(f"Removed existing job: {job.name}")
+  return removed_count
 
 
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -158,7 +161,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def schedule_birthday_tasks(update: Update, job_queue) -> None:
   """Schedules tasks for sending birthday reminders."""
   now = datetime.now(MOSCOW_TZ)
-  persons = get_persons()  # Используем актуальные данные из файла
+  persons = get_persons()
 
   for person in persons:
     chat_id, message_thread_id, name, bday = get_job_data(update, person)
@@ -322,21 +325,20 @@ async def add_birthday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if len(args) < 2:
       await update.message.reply_text(
         "❌ Неверный формат команды\n"
-        "Используйте: /add \{name\} \{dd.mm.yyyy\}\n"
+        "Используйте: /add <Имя> <ДД.ММ.ГГГГ>\n"
         "Пример: /add Анна 15.05.1990"
       )
       return
 
-    # Объединяем все аргументы кроме последнего как имя
     name = " ".join(args[:-1])
     date_str = args[-1]
     
-    # Проверка формата даты
     if not re.match(r"^\d{2}\.\d{2}\.\d{4}$", date_str):
-      return await update.message.reply_text(
+      await update.message.reply_text(
         "❌ Неверный формат даты\n"
-        "Используйте dd.mm.yyyy (например: 15.05.2021)"
+        "Используйте ДД.ММ.ГГГГ (например: 15.05.1990)"
       )
+      return
 
     try:
       birth_date = datetime.strptime(date_str, "%d.%m.%Y").date()
@@ -347,19 +349,16 @@ async def add_birthday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
       await update.message.reply_text("❌ Некорректная дата")
       return
 
-    # Проверка на дубликаты
     persons = get_persons()
     if any(p["name"].lower() == name.lower() for p in persons):
       await update.message.reply_text(f"❌ Имя '{name}' уже существует в списке")
       return
 
-    # Добавляем новую запись
     new_entry = {"name": name, "birthday": birth_date.isoformat()}
     current_data = load('birthdays.json', DEFAULT_PERSONS)
     current_data.append(new_entry)
     save('birthdays.json', current_data)
 
-    # Планируем уведомления
     await schedule_birthday_tasks(update, context.job_queue)
     
     await update.message.reply_text(
@@ -372,12 +371,66 @@ async def add_birthday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     logging.error(f"Error in add_birthday: {e}", exc_info=True)
     await update.message.reply_text(f"❌ Ошибка при добавлении: {e}", parse_mode="HTML")
 
+async def remove_birthday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+  """Remove birthday from the list"""
+  try:
+    if not context.args:
+      await update.message.reply_text(
+        "❌ Укажите имя для удаления\n"
+        "Используйте: /remove <Имя>\n"
+        "Пример: /remove Анна"
+      )
+      return
+
+    name_to_remove = " ".join(context.args).strip()
+    if not name_to_remove:
+      await update.message.reply_text("❌ Имя не может быть пустым")
+      return
+
+    current_data = load('birthdays.json', DEFAULT_PERSONS)
+    original_count = len(current_data)
+    
+    # Фильтрация с учетом регистра
+    filtered_data = [p for p in current_data if p["name"].lower() != name_to_remove.lower()]
+    
+    if len(filtered_data) == original_count:
+      await update.message.reply_text(f"❌ Не найдено: '{name_to_remove}'")
+      return
+
+    save('birthdays.json', filtered_data)
+    
+    # Удаляем связанные задания
+    persons = get_persons()
+    removed_person = next((p for p in persons if p["name"].lower() == name_to_remove.lower()), None)
+    
+    if removed_person:
+      chat_id = update.effective_chat.id
+      message_thread_id = update.effective_message.message_thread_id
+      base_job_name = f"{chat_id}_{message_thread_id}_{removed_person['name']}_{removed_person['birthday']}"
+      jobs_removed = remove_existing_jobs(context.job_queue, base_job_name)
+    else:
+      jobs_removed = 0
+
+    await update.message.reply_text(
+      f"✅ <b>{name_to_remove}</b> удален(а) из списка!\n"
+      f"Удалено заданий: {jobs_removed}",
+      parse_mode="HTML"
+    )
+    
+    # Покажем обновленный список
+    await list_birthdays(update, context)
+    
+  except Exception as e:
+    logging.error(f"Error in remove_birthday: {e}", exc_info=True)
+    await update.message.reply_text(f"❌ Ошибка при удалении: {e}", parse_mode="HTML")
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
   """Show help information."""
   help_text = (
     f"🎂 <b>Birthday Bot - Команды</b>\n\n"
     f"<b>/start</b> - Запустить бота и запланировать уведомления\n"
     f"<b>/add &lt;Имя&gt; &lt;ДД.ММ.ГГГГ&gt;</b> - Добавить новый день рождения\n"
+    f"<b>/remove &lt;Имя&gt;</b> - Удалить день рождения\n"
     f"<b>/list</b> - Показать все дни рождения\n"
     f"<b>/check</b> - Проверить запланированные уведомления\n"
     f"<b>/stop</b> - Остановить все уведомления\n"
@@ -411,9 +464,10 @@ def main() -> None:
     CommandHandler("check", check),
     CommandHandler("list", list_birthdays),
     CommandHandler("add", add_birthday),
+    CommandHandler("remove", remove_birthday),
     CommandHandler("help", help_command),
     MessageHandler(filters.COMMAND, unknown)
-]
+  ]
   
   for handler in handlers:
     application.add_handler(handler)
