@@ -6,12 +6,11 @@ from dotenv import load_dotenv
 from datetime import datetime, time, timezone, timedelta, date
 import logging
 import re
-import random
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-from utils.ansii import totoro, meow, kaomoji, disnay, stich, psyduck, toothless, pikachu, umbreon, plant, mew, zoiberg, fry, hermes, lionking, deer
+from utils.ansii import totoro, meow, kaomoji, disnay
 from utils.decline import decline_name
 from utils.date import format_date
 from utils.file import load, save
@@ -25,8 +24,6 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 HOUR = datetime.now(MOSCOW_TZ).hour
 MINUTE = datetime.now(MOSCOW_TZ).minute + 1
-
-ansii = [stich, psyduck, toothless, pikachu, umbreon, plant, mew, zoiberg, fry, hermes, lionking, deer]
 
 logging.basicConfig(
   format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -58,7 +55,7 @@ def get_persons():
       birthday = datetime.fromisoformat(entry["birthday"]).date()
       persons.append({
         "name": entry["name"],
-        "birthday": birthday,
+        "birthday": birthday
       })
     except Exception as e:
       logging.error(f"Error parsing birthday for {entry.get('name', 'unknown')}: {e}")
@@ -70,9 +67,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
   message_text = (
     f"🎂 <b>Привет!</b>\n\n"
     f"Я - <i>бот-о-днях-рождения-напоминатель</i>.\n"
-    f"Вы выпустили меня из кувшина!\n"
-    f"<code>{totoro}</code>\n"
-    f"\n\n... ждём 🎂..."
+    f"Вы выпустили меня из кувшина!\n<code>"
+    f"<pre>{totoro}</pre>\n"
+    f"\n\n... ждём 🎂...</code>"
   )
 
   await update.message.reply_text(
@@ -260,6 +257,7 @@ async def send_birthday_reminder_and_create_next(context: ContextTypes.DEFAULT_T
   except Exception as e:
     logging.error(f"Error rescheduling birthday notification: {e}", exc_info=True)
 
+
 async def send_early_birthday_reminder_and_create_next(context: ContextTypes.DEFAULT_TYPE) -> None:
   """Sends an early birthday reminder and schedules the next one"""
   job = context.job
@@ -272,7 +270,7 @@ async def send_early_birthday_reminder_and_create_next(context: ContextTypes.DEF
     message_text = (
       f"⏳ <b>Скоро</b> день рождения у <b>{decline_name(name, 'gent')}</b>!\n\n"
       f"🎂 {format_date(birthday)}!\n\n"
-      f"<code>{random.choice(ansii)}</code>\n\n"
+      f"<pre>{kaomoji}</pre>\n\n"
       f"... готовим подарки ..."
     )
     await context.bot.send_message(
@@ -304,6 +302,7 @@ async def send_early_birthday_reminder_and_create_next(context: ContextTypes.DEF
   except Exception as e:
     logging.error(f"Error rescheduling early notification: {e}", exc_info=True)
 
+
 async def list_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
   """List all birthdays"""
   try:
@@ -324,6 +323,7 @@ async def list_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
   except Exception as e:
     logging.error(f"Error in list_birthdays: {e}", exc_info=True)
     await update.message.reply_text(f"❌ Ошибка при получении списка: {e}", parse_mode="HTML")
+
 
 async def add_birthday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
   """Add new birthday to the list"""
@@ -378,6 +378,7 @@ async def add_birthday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     logging.error(f"Error in add_birthday: {e}", exc_info=True)
     await update.message.reply_text(f"❌ Ошибка при добавлении: {e}", parse_mode="HTML")
 
+
 async def remove_birthday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
   """Remove birthday from the list"""
   try:
@@ -431,6 +432,7 @@ async def remove_birthday(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     logging.error(f"Error in remove_birthday: {e}", exc_info=True)
     await update.message.reply_text(f"❌ Ошибка при удалении: {e}", parse_mode="HTML")
 
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
   """Show help information."""
   help_text = (
@@ -458,6 +460,7 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parse_mode="HTML"
   )
 
+
 def main() -> None:
   if not TOKEN: 
     return logging.error("Требуется TELEGRAM_TOKEN в .env")
@@ -479,7 +482,9 @@ def main() -> None:
   for handler in handlers:
     application.add_handler(handler)
 
-  application.run_polling(allowed_updates=Update.ALL_TYPES)
+  # application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+  return application 
 
 
 if __name__ == "__main__":
