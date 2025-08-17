@@ -38,7 +38,7 @@ DEFAULT_PERSONS = [
   {"name": "Черный Витя", "birthday": "2000-05-29"},
   {"name": "Эмиль", "birthday": "2000-12-08"},
   {"name": "Аня Новицкая", "birthday": "2017-10-22"},
-  {"name": "Нина Черная", "birthday": "2020-08-18"},
+  {"name": "Нина Черная", "birthday": "2020-08-19"},
   {"name": "Агата", "birthday": "2019-06-20"},
   {"name": "Левон", "birthday": "2018-06-10"},
   {"name": "Миша", "birthday": "2020-10-19"},
@@ -81,6 +81,69 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
   )
 
   await schedule_birthday_tasks(update, context.job_queue)
+
+
+def days_to_birthday(b):
+  t = date.today()
+  n = b.replace(year=t.year + (b.replace(year=t.year) < t))
+  return (n - t).days
+
+def pluralize(number: int, forms: tuple[str, str, str]) -> str:
+    """
+    Подбирает правильную форму существительного для числа.
+    :param number: число
+    :param forms: кортеж из трёх форм слова (для 1, 2 и 5)
+    :return: правильная форма слова
+    """
+    n = abs(number) % 100
+    if 5 <= n <= 20:
+        return forms[2]
+    n %= 10
+    if n == 1:
+        return forms[0]
+    if 2 <= n <= 4:
+        return forms[1]
+    return forms[2]
+
+async def closest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+  """Show closest birthday"""
+
+  persons = get_persons()
+  closest_birthday = min(persons, key=lambda p: days_to_birthday(p["birthday"]))
+  name = closest_birthday["name"]
+  birthday = closest_birthday["birthday"]
+  days = days_to_birthday(birthday)
+
+  when = f"Через {days} {pluralize(days, ('день', 'дня', 'дней'))}" if days else "Сегодня"
+
+  message_text = (
+    f"⏳ <b>{when}</b> у <b>{decline_name(name, 'gent')}</b> день рождения!\n\n"
+    f"🎂 {format_date(birthday)}!\n\n"
+    f"<code>{random.choice(ansii)}</code>\n\n"
+    f"... готовим подарки ..."
+  )
+
+  await update.message.delete()
+
+  sent_message = await context.bot.send_message(
+    chat_id=update.effective_chat.id,
+    message_thread_id=update.effective_message.message_thread_id or context.job.data["message_thread_id"],
+    text=message_text,
+    parse_mode="HTML"
+  )
+
+  # Закрепляем сообщение
+  try:
+    await context.bot.pin_chat_message(
+      chat_id=update.effective_chat.id,
+      message_id=sent_message.message_id,
+      disable_notification=True  # Закрепить без уведомления
+    )
+    return sent_message
+  except Exception as e:
+    print(f"Ошибка при закреплении: {e}")
+    # В случае ошибки просто возвращаем сообщение без закрепления
+    return sent_message
 
 
 def get_job_data(update: Update, person) -> tuple:
@@ -469,6 +532,7 @@ def main() -> None:
     CommandHandler("start", start),
     CommandHandler("stop", stop),
     CommandHandler("check", check),
+    CommandHandler("x", closest),
     CommandHandler("list", list_birthdays),
     CommandHandler("add", add_birthday),
     CommandHandler("remove", remove_birthday),
